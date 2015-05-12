@@ -1,12 +1,32 @@
 <?php
 
 class funcs {
-   private $dbhost       = "localhost";
-   private $db           = "biocore";
-   private $dbuser       = "bioinfo";
-   private $dbpass       = "bioinfo2013";
+   private $dbhost       = "";
+   private $db           = "";
+   private $dbuser       = "";
+   private $dbpass       = "";
+   private $tool_path    = "";
    private $python       = "python";
-   
+ 
+   function readINI()
+   {
+     if ($this->dbhost=="")
+     { 
+        $param_section = "Default";
+        
+        if (!empty(getenv('DOLPHIN_PARAMS_SECTION'))){
+           $param_section=getenv('DOLPHIN_PARAMS_SECTION');
+        }               
+        $ini = parse_ini_file("config.ini", true);
+        $ini_array = $ini[$param_section];
+        $this->dbhost=$ini_array['DB_HOST'];
+        $this->db=$ini_array['DB_NAME'];
+        $this->dbpass=$ini_array['DB_PASSWORD'];
+        $this->dbuser=$ini_array['DB_USER'];
+        $this->tool_path=$ini_array['DOLPHIN_TOOLS_SRC_PATH'];
+     }
+   }
+ 
    function getKey()
    {
         $characters = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -24,6 +44,7 @@ class funcs {
    }
    function runSQL($sql)
    {
+        $this->readINI();
 	$link = new mysqli($this->dbhost, $this->dbuser, $this->dbpass, $this->db);
 	// check connection
 	if (mysqli_connect_errno()) { 
@@ -44,35 +65,6 @@ class funcs {
         }
 	$link->close();
 	return $sql;
-   }
-   function runSQL1($sql, $sql1)
-   {
-	$link = new mysqli($this->dbhost, $this->dbuser, $this->dbpass, $this->db);
-	// check connection
-	if (mysqli_connect_errno()) { 
-  		exit('Connect failed: '. mysqli_connect_error());
-	}
-        $i=0;
-	while($i<3)
-        {
-	  $result=$link->query($sql);
-          $err='MySQL err: '.mysql_errno($link).': '.mysql_error($link)."\n";
-	  $res=$link->query($sql1);
-          $num_rows =$res->num_rows;
-	  $extra="i=".$i;
-          if ($result && is_object($res) && $num_rows>0)
-          {
-             $rowser=$res->fetch_assoc();
-             $extra=$rowser['job_id'].":".$rowser['submit_time'].":".$rowser['start_time'].":".$rowser['end_time'];
-	     $link->close();
-                
-	     return $result.":[$extra][$err]\n";
-	  }
-          sleep(5*($i+1)); 
-	  $i++;
-        }
-	$link->close();
-	return $sql."[$err]";
    }
    function syscall($command)
    {
@@ -195,9 +187,8 @@ class funcs {
                 return "Service ended successfully!!!";
 	     }
          }
-         return "RUNNING(1):$retval:SERVICENAME:$servicename";
+         return "RUNNING(1):$retval:SERVICENAME:$servicename:[".$this->dbhost."]";
          #return "RUNNING(1):SERVICENAME:$servicename";
-         #return "RUNNING:(1)[$service_id][jn=$jn][".$retval."]";
          #return "RUNNING";
       }
       return 'START';
@@ -355,6 +346,7 @@ class funcs {
 
    function startService($servicename, $wkey, $inputcommand)
    {
+        $this->readINI();
                
         $wf = $this->getWorkflowInformation($wkey);
         if (is_array($wf))
@@ -378,6 +370,7 @@ class funcs {
         
             if($result=$this->runSQL($sql))
 	    {	
+  
 		### RUN THE JOB HERE AND UPDATE THE RESULT 1 WHEN IT IS FINISHED
                 $command=$this->getCommand($servicename, $username, $inputcommand, $defaultparam);
 
@@ -391,9 +384,9 @@ class funcs {
                    $dpf="-p $defaultparam";
 
 		#docker: job runService command changed
-                $edir=$_SERVER["DOLPHIN_TOOLS_PATH"];
+                $edir=$this->tool_path;
                 #$com="ssh -o ConnectTimeout=30 $username@".$this->remotehost." \"".$this->python." ".$edir."/src/runService.py  -d ".$this->dbhost." $ipf $dpf -o $outdir -u $username -k $wkey -c \\\"$command\\\" -n $servicename -s $servicename\" 2>&1";
-                $com=$this->python." ".$edir."/src/runService.py  -d ".$this->dbhost." $ipf $dpf -o $outdir -u $username -k $wkey -c \"$command\" -n $servicename -s $servicename 2>&1";
+                $com=$this->python." ".$edir."/runService.py  -d ".$this->dbhost." $ipf $dpf -o $outdir -u $username -k $wkey -c \"$command\" -n $servicename -s $servicename 2>&1";
                 $retval=system($com);
                 #return $com;
                 if(eregi("Error", $retval))
@@ -439,6 +432,8 @@ class funcs {
    function endWorkflow($wkey)
    {
         $sql = "update workflow_run set result='1', end_time=now() where wkey='$wkey'";
+        $result = $this->runSQL($sql);
+	$sql = "update ngs_runparams set run_status='1' where wkey='$wkey'";
         $result = $this->runSQL($sql);   
 		   #return $sql;
         return "Success!!!";
@@ -498,7 +493,6 @@ class funcs {
        #$sql = "update jobs set `$field`=now(), `result`='$result' where `username`= '$username' and `wkey`='$wkey' and `jobname`='$jobname' and `workflow_id`='$workflow_id' and `service_id`='$service_id' and `job_num`='$jobnum'";
        $sql = "update jobs set `$field`=now(), `result`='$result' where `wkey`='$wkey' and `job_num`='$jobnum'";
        #$sql1 = "select job_id, submit_time, start_time, end_time from jobs where `wkey`='$wkey' and `job_num`='$jobnum'";
-       #$res = $this->runSQL1($sql, $sql1 );
        $res = $this->runSQL($sql);
        return $res.":".$sql;
    }
